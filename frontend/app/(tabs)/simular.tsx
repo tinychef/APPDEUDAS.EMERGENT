@@ -26,31 +26,45 @@ export default function SimularScreen() {
   const [frecuencia, setFrecuencia] = useState(1); // every N months
   const [duracionMeses, setDuracionMeses] = useState(12);
 
-  // Calculate simulation
+  // Calculate simulation - adding new abonos on top of existing ones
   const simulacion = useMemo(() => {
     if (!resultado) return null;
 
-    // Generate simulated extra payments
-    const simulatedAbonos: ExtraPayment[] = [];
+    const { abonos } = useDebtStore.getState();
+    
+    // Generate simulated extra payments starting from next month
+    const simulatedAbonos: ExtraPayment[] = [...abonos]; // Start with existing abonos
     const startMonth = (resultado.cronograma.find(c => c.estado === 'PROXIMA')?.cuota || 1);
     
     for (let i = 0; i < duracionMeses; i += frecuencia) {
       const cuota = startMonth + i;
       if (cuota <= prestamo.plazoMeses) {
-        simulatedAbonos.push({
-          cuota,
-          monto: montoAbono,
-          fecha: new Date().toISOString().split('T')[0],
-        });
+        // Check if there's already an abono for this month
+        const existingIndex = simulatedAbonos.findIndex(a => a.cuota === cuota);
+        if (existingIndex >= 0) {
+          // Add to existing
+          simulatedAbonos[existingIndex] = {
+            ...simulatedAbonos[existingIndex],
+            monto: simulatedAbonos[existingIndex].monto + montoAbono,
+          };
+        } else {
+          simulatedAbonos.push({
+            cuota,
+            monto: montoAbono,
+            fecha: new Date().toISOString().split('T')[0],
+          });
+        }
       }
     }
 
     const resultadoSimulado = calcularAmortizacion(prestamo, simulatedAbonos);
+    const nuevosTotalAbonos = simulatedAbonos.reduce((sum, a) => sum + a.monto, 0);
+    const abonosAdicionales = nuevosTotalAbonos - resultado.resumen.totalAbonos;
     
     return {
       resultado: resultadoSimulado,
-      totalAbonoSimulado: simulatedAbonos.reduce((sum, a) => sum + a.monto, 0),
-      cantidadAbonos: simulatedAbonos.length,
+      totalAbonoSimulado: abonosAdicionales,
+      cantidadAbonos: Math.ceil(duracionMeses / frecuencia),
     };
   }, [prestamo, montoAbono, frecuencia, duracionMeses, resultado]);
 
