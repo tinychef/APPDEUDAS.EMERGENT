@@ -1,6 +1,26 @@
 // DebtMap - Amortization Engine
 // Translates Excel logic to TypeScript
 
+/**
+ * Estrategias de amortización anticipada
+ *
+ * REDUCIR_PLAZO (reducir plazo):
+ *   El abono extra se aplica íntegramente a capital. La cuota mensual
+ *   permanece igual, pero el préstamo se liquida en menos tiempo.
+ *   Resultado: mayor ahorro en intereses totales, el deudor libera
+ *   el flujo de caja solo al final del crédito.
+ *   Ideal para: quienes priorizan minimizar el costo total del crédito.
+ *
+ * REDUCIR_CUOTA (reducir cuota):
+ *   El abono extra recalcula la cuota mensual sobre el nuevo saldo,
+ *   manteniendo el plazo original. El alivio es inmediato en el flujo
+ *   mensual, pero el ahorro en intereses es menor que en REDUCIR_PLAZO.
+ *   Ideal para: quienes necesitan reducir su carga mensual a corto plazo.
+ *
+ * NOTA: el motor actual (calcularAmortizacion) implementa únicamente
+ * REDUCIR_PLAZO. El campo `estrategia` está disponible en LoanParams
+ * para cuando se habilite la segunda estrategia.
+ */
 export interface LoanParams {
   monto: number;
   tasaEA: number;
