@@ -4,111 +4,103 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**DebtMap** is a mortgage/loan amortization optimizer for the Colombian market. Users configure a loan, add extra payments (abonos), and the app calculates savings in interest and time. The domain language is Spanish throughout: `prestamo` (loan), `abonos` (extra payments), `cuota` (installment), `tasa` (rate), `plazo` (term).
+**FreeDueda / AppDeudas** — A mobile-first debt and loan management app. Users enter mortgage/loan parameters and extra payments; the app calculates amortization schedules and savings.
 
----
+The repo is structured as a monorepo under `apps/`:
+- `apps/mobile/` — Expo (React Native) frontend (primary active codebase)
+- `apps/api/` — FastAPI + MongoDB backend (Python)
 
-## Commands
+> Note: The README references `frontend/` and `backend/` directories, but the actual code lives under `apps/mobile/` and `apps/api/`.
 
-### Frontend
+## Mobile App Commands
+
+All commands run from `apps/mobile/`:
 
 ```bash
-cd frontend
-npm install          # install dependencies
-npm start            # start Expo dev server (scan QR or press a/i)
-npx expo start --android
-npx expo start --ios
-npm run lint         # ESLint
-npm run reset-project  # reset to blank Expo template
+cd apps/mobile
+
+# Start dev server
+yarn start
+
+# Platform-specific
+yarn android
+yarn ios
+yarn web
+
+# Lint
+yarn lint
 ```
 
-### Backend
+The project uses **yarn** (v1.22) as its package manager — not npm.
+
+## Backend Commands
+
+From `apps/api/`:
 
 ```bash
-cd backend
+cd apps/api
+
+# Install dependencies
 pip install -r requirements.txt
-uvicorn server:app --reload   # runs on http://localhost:8000
-# Interactive API docs: http://localhost:8000/docs
+
+# Run dev server
+uvicorn server:app --reload
+# API at http://localhost:8000, docs at http://localhost:8000/docs
 ```
 
-Backend requires a `.env` file:
-```env
-MONGO_URL=mongodb+srv://<user>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority
+Backend requires a `.env` file with:
+```
+MONGO_URL=mongodb+srv://...
 DB_NAME=app_deudas
 ```
 
----
-
 ## Architecture
 
-### Data Flow
+### Mobile App (`apps/mobile/`)
 
-```
-User Input (Screens)
-  → useDebtStore (Zustand) [frontend/store/debtStore.ts]
-  → calcularAmortizacion() [frontend/utils/amortizacion.ts]
-  → resultado: AmortizationResult
-  → UI components consume resultado directly from store
-```
+**Routing**: Expo Router (file-based). Entry at `app/_layout.tsx`.
+- `app/_layout.tsx` — Root layout: initializes SQLite DB, handles Supabase auth session, shows animated splash screen, redirects to `/login` or `/(tabs)` based on auth state.
+- `app/login.tsx` — Auth screen
+- `app/setup.tsx` — Modal for initial loan setup
+- `app/(tabs)/` — Main tab navigator: Home (`index`), Pagos (`abonos`), Stats (`cronograma`), Simular, Perfil (`config`)
 
-All financial calculations happen **client-side in TypeScript** — the backend is a minimal MVP (health check + MongoDB status) and is not yet wired to the frontend.
+**State Management**: Zustand (`store/debtStore.ts`)
+- Central store for `LoanParams`, `ExtraPayment[]`, and computed `AmortizationResult`
+- Calls `calcularAmortizacion()` synchronously (wrapped in 100ms setTimeout for UX) on every mutation
+- Initializes with hardcoded demo data (a real mortgage from an Excel spreadsheet)
 
-### Core Calculation Engine (`frontend/utils/amortizacion.ts`)
+**Core Calculation Engine** (`utils/amortizacion.ts`)
+- Pure TypeScript — no dependencies
+- `calcularAmortizacion(params, abonos)` produces two parallel schedules: with and without extra payments
+- Implements **REDUCIR_PLAZO** strategy only (extra payments reduce term, not monthly payment). `REDUCIR_CUOTA` field exists but is not yet implemented.
+- Rate conversion: EA (annual effective) → EM (monthly effective) via `tasaEAtoEM()`
+- Currency formatted as Colombian Pesos (COP) via `Intl.NumberFormat('es-CO')`
 
-This is the heart of the app — a direct port of Excel amortization logic:
-- `tasaEAtoEM(tasaEA)` — converts annual effective rate to monthly effective rate
-- `calcularCuotaMensual(monto, tasaEM, plazoMeses)` — standard loan payment formula
-- `calcularAmortizacion(params, abonos)` — builds two parallel schedules: one baseline (no extra payments) and one with extra payments, then returns a `resumen` comparing them
+**Local Persistence**: SQLite via `expo-sqlite`
+- `data/local/db.ts` — Singleton DB with versioned migrations (WAL mode, FK constraints enabled)
+- `data/local/migrations.ts` — Migration functions per schema version
+- `data/local/repositories/debtsRepository.ts` — Repository pattern for DB access
+- To add a new migration: create `migrateToVN(db)`, add to `MIGRATIONS` registry in `db.ts`, increment `CURRENT_SCHEMA_VERSION`
 
-The `estrategia` field (`REDUCIR_PLAZO` vs `REDUCIR_CUOTA`) is stored in state but the current engine always uses `REDUCIR_PLAZO` behavior (extra payments reduce remaining term, not monthly payment).
+**Auth**: Supabase (`lib/supabase.ts`)
+- Uses `AsyncStorage` for session persistence on native, standard storage on web
+- Auth flow managed in root `_layout.tsx` via `supabase.auth.onAuthStateChange`
 
-### State Management (`frontend/store/debtStore.ts`)
+**Design System** (`constants/theme.ts`)
+- Brand color: `#820AD1` (purple)
+- Exports `DarkColors`, `LightColors`, and `Colors` (= `DarkColors` for backwards compat)
+- Also exports `Typography`, `Spacing`, `BorderRadius`, `Shadows`, `Animation`
+- `GlassCard` is the primary card primitive; use `variant` prop for semantic borders
 
-Single Zustand store `useDebtStore` holds:
-- `prestamo: LoanParams` — loan configuration
-- `abonos: ExtraPayment[]` — list of extra payments indexed by `cuota` (installment number)
-- `resultado: AmortizationResult | null` — computed output
-- `hasSetup: boolean` — whether the user has configured a loan (gates the setup modal)
+**Key Components**:
+- `components/GlassCard.tsx` and `components/ui/GlassCard.tsx` — glass-morphism card (two copies exist; prefer `components/ui/`)
+- `components/layout/ResponsiveLayout.tsx` — wraps tablet/desktop layout
+- `hooks/useIsDesktop.ts` — detects desktop breakpoint via `@expo/match-media`
 
-The store initializes with demo data (a $101.4M mortgage at 12.01% EA, 180 months) so the app is immediately usable.
+### Path Aliases
 
-`recalculate()` is called after every mutation; it uses a 100ms `setTimeout` to keep the UI responsive.
+`@/*` maps to `apps/mobile/*` (configured in `tsconfig.json`).
 
-### Screen Organization (Expo Router tabs)
+### TypeScript
 
-| File | Screen | Purpose |
-|------|--------|---------|
-| `app/(tabs)/index.tsx` | Dashboard | KPIs, ProgressRing, balance chart, savings summary |
-| `app/(tabs)/abonos.tsx` | Abonos | Timeline of extra payments, modal to add/edit |
-| `app/(tabs)/cronograma.tsx` | Cronograma | Full payment schedule table with filters |
-| `app/(tabs)/simular.tsx` | Simular | What-if sliders + projection chart |
-| `app/(tabs)/config.tsx` | Config | Loan params, reset, demo loader |
-| `app/setup.tsx` | Setup | Modal for first-time loan configuration |
-
-### Theme System (`frontend/constants/theme.ts`)
-
-Dark premium theme (Uber/Robinhood-inspired):
-- Primary: `#00D4FF` (electric cyan)
-- Positive: `#00E676` (green)
-- Alert: `#FF6B35` (orange)
-- Background: `#0A0A0F` (near black)
-- Glass cards use `rgba` with `expo-blur` for glassmorphism effect
-
-All screens use `theme.colors`, `theme.typography`, and `theme.spacing` — do not hardcode color values.
-
-### Backend (`backend/server.py`)
-
-Minimal FastAPI app. All routes are under `/api`. Currently only has status check endpoints. MongoDB collections accessed via Motor async client.
-
----
-
-## Key TypeScript Types
-
-```typescript
-LoanParams    // monto, tasaEA, plazoMeses, fechaDesembolso, estrategia
-ExtraPayment  // cuota (installment #), monto, fecha
-PaymentRow    // one row in the amortization table
-AmortizationResult // { cronograma, cronogramaSinAbonos, resumen }
-```
-
-Currency formatting uses `es-CO` locale (Colombian Peso, COP). Use `formatCurrency()` and `formatShortCurrency()` from `amortizacion.ts` — never format money manually.
+Strict mode enabled. Expo SDK 54, React 19, React Native 0.81.
